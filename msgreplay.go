@@ -3,8 +3,6 @@ package replay
 import (
 	"sync"
 	"time"
-
-	"github.com/FactomProject/factomd/common/interfaces"
 )
 
 const (
@@ -69,29 +67,18 @@ func (m *MsgReplay) Recenter(stamp time.Time) {
 	m.buckets[m.current-1].Transfer(m.buckets[m.current])
 }
 
-// UpdateReplay given a message will return 1 if the message is new, and add it
-// to the replay filter. If the message is rejected, it will return < 0.
-// The reject codes are constants. A return of 0 should never happen.
-func (m *MsgReplay) UpdateReplay(msg interfaces.IMsg) int {
-	return m.checkReplay(msg, true)
-}
-
-func (m *MsgReplay) checkReplay(msg interfaces.IMsg, update bool) int {
+func (m *MsgReplay) CheckReplay(hash [32]byte, ts time.Time, update bool) int {
 	m.bucketsMtx.RLock()
 	defer m.bucketsMtx.RUnlock()
 	var index int = -1 // Index of the bucket to check against
 
-	// TODO: .GetTime() might be expensive? We should switch to time.Time in the msg so
-	//		this conversion is free.
-	mTime := msg.GetTimestamp().GetTime()
-
-	if mTime.Before(m.buckets[0].time) {
+	if ts.Before(m.buckets[0].time) {
 		return TimestampExpired
 	}
 
 	// First see if the this msg is from the past
 	for i := 1; i < m.future; i++ {
-		if mTime.Before(m.buckets[i].time) {
+		if ts.Before(m.buckets[i].time) {
 			// Place the msg into the correct bucket
 			index = i - 1 // Bucket[i-1] is the right bucket
 			break
@@ -100,7 +87,7 @@ func (m *MsgReplay) checkReplay(msg interfaces.IMsg, update bool) int {
 
 	if index == -1 {
 		// Msg is from the future or the current
-		if mTime.Before(m.buckets[m.current].time.Add(m.blocktime)) {
+		if ts.Before(m.buckets[m.current].time.Add(m.blocktime)) {
 			// Current
 			index = m.current
 		} else {
@@ -112,21 +99,15 @@ func (m *MsgReplay) checkReplay(msg interfaces.IMsg, update bool) int {
 	}
 
 	if index != -1 {
-		_, ok := m.buckets[index].Get(msg.GetRepeatHash().Fixed())
+		_, ok := m.buckets[index].Get(hash)
 		if ok {
 			return ReplayMsg
 		}
 		if update {
-			m.buckets[index].Set(msg.GetRepeatHash().Fixed(), mTime)
+			m.buckets[index].Set(hash, ts)
 			return MsgAdded // Added
 		}
 	}
 
 	return MsgValid // Found, but not updated
-}
-
-// IsReplay returns the same error codes as UpdateReplay, but will return a 0 if the
-// message is not found in the filter and is valid.
-func (m *MsgReplay) IsReplay(msg interfaces.IMsg) int {
-	return m.checkReplay(msg, false)
 }

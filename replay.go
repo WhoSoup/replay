@@ -4,8 +4,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/FactomProject/factomd/common/interfaces"
 )
 
 type Replay struct {
@@ -14,6 +12,7 @@ type Replay struct {
 	timestamps []time.Time
 	windows    int
 	mtx        sync.RWMutex
+	blocktime  time.Duration
 }
 
 type Entry struct {
@@ -21,38 +20,37 @@ type Entry struct {
 	time time.Time
 }
 
-func New(oldest time.Time, windows int) *Replay {
+func New(blocktime time.Duration, windows int) *Replay {
 	r := new(Replay)
 	r.data = make(map[[32]byte]bool)
 	r.timestamps = make([]time.Time, 0, windows+1)
-	r.timestamps = append(r.timestamps, oldest)
+	//r.timestamps = append(r.timestamps, oldest)
+	r.blocktime = blocktime
 	return r
 }
 
-func (r *Replay) Update(msg interfaces.IMsg) bool {
+func (r *Replay) Update(hash [32]byte, ts time.Time) bool {
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 
-	rh := msg.GetRepeatHash().Fixed()
-
-	if _, ok := r.data[rh]; ok {
+	if _, ok := r.data[hash]; ok {
 		return false
 	}
 
-	r.data[rh] = true
-	r.added = append(r.added, &Entry{key: rh, time: msg.GetTimestamp().GetTime()})
+	r.data[hash] = true
+	r.added = append(r.added, &Entry{key: hash, time: ts})
 	return true
 }
 
-func (r *Replay) Has(msg interfaces.IMsg) bool {
+func (r *Replay) Has(hash [32]byte, ts time.Time) bool {
 	r.mtx.RLock()
 	defer r.mtx.RUnlock()
 
-	if msg.GetTimestamp().GetTime().Before(r.timestamps[0]) {
+	if ts.Before(r.timestamps[0]) {
 		return false // todo: TooOld
 	}
 
-	_, ok := r.data[msg.GetRepeatHash().Fixed()]
+	_, ok := r.data[hash]
 	return ok
 }
 
